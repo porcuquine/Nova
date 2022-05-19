@@ -1,8 +1,11 @@
 //! This module defines R1CS related types and a folding scheme for Relaxed R1CS
 #![allow(clippy::type_complexity)]
-use super::commitments::{CommitGens, CommitTrait, Commitment, CompressedCommitment};
-use super::errors::NovaError;
-use super::traits::{Group, PrimeField};
+use super::{
+  commitments::{CommitGens, CommitTrait, Commitment, CompressedCommitment},
+  errors::NovaError,
+  traits::Group,
+};
+use ff::Field;
 use itertools::concat;
 use rayon::prelude::*;
 
@@ -33,8 +36,8 @@ pub struct R1CSWitness<G: Group> {
 /// A type that holds an R1CS instance
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct R1CSInstance<G: Group> {
-  comm_W: Commitment<G>,
-  X: Vec<G::Scalar>,
+  pub(crate) comm_W: Commitment<G>,
+  pub(crate) X: Vec<G::Scalar>,
 }
 
 /// A type that holds a witness for a given Relaxed R1CS instance

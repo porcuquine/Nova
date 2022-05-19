@@ -1,3 +1,3 @@
-mod ecc;
-pub mod ecc_circuit;
+pub mod ecc;
+pub mod r1cs;
 pub mod utils;

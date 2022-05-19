@@ -7,7 +7,7 @@ use bellperson::{
   ConstraintSystem, SynthesisError,
 };
 use ff::{PrimeField, PrimeFieldBits};
-use generic_array::typenum::{U25, U27, U31};
+use generic_array::typenum::{U25, U27, U31, U8};
 use neptune::{
   circuit::poseidon_hash,
   poseidon::{Poseidon, PoseidonConstants},
@@ -22,9 +22,10 @@ pub struct NovaPoseidonConstants<F>
 where
   F: PrimeField,
 {
-  pub(crate) constants25: PoseidonConstants<F, U25>,
-  pub(crate) constants27: PoseidonConstants<F, U27>,
-  pub(crate) constants31: PoseidonConstants<F, U31>,
+  constants8: PoseidonConstants<F, U8>,
+  constants25: PoseidonConstants<F, U25>,
+  constants27: PoseidonConstants<F, U27>,
+  constants31: PoseidonConstants<F, U31>,
 }
 
 #[cfg(test)]
@@ -34,10 +35,12 @@ where
 {
   /// Generate Poseidon constants for the arities that Nova uses
   pub fn new() -> Self {
+    let constants8 = PoseidonConstants::<F, U8>::new_with_strength(Strength::Strengthened);
     let constants25 = PoseidonConstants::<F, U25>::new_with_strength(Strength::Strengthened);
     let constants27 = PoseidonConstants::<F, U27>::new_with_strength(Strength::Strengthened);
     let constants31 = PoseidonConstants::<F, U31>::new_with_strength(Strength::Strengthened);
     Self {
+      constants8,
       constants25,
       constants27,
       constants31,
@@ -68,22 +71,17 @@ where
     }
   }
 
-  #[allow(dead_code)]
-  /// Flush the state of the RO
-  pub fn flush_state(&mut self) {
-    self.state = Vec::new();
-  }
-
   /// Absorb a new number into the state of the oracle
   #[allow(dead_code)]
   pub fn absorb(&mut self, e: Scalar) {
     self.state.push(e);
   }
 
-  /// Compute a challenge by hashing the current state
-  #[allow(dead_code)]
-  pub fn get_challenge(&mut self) -> Scalar {
-    let hash = match self.state.len() {
+  fn hash_inner(&mut self) -> Scalar {
+    match self.state.len() {
+      8 => {
+        Poseidon::<Scalar, U8>::new_with_preimage(&self.state, &self.constants.constants8).hash()
+      }
       25 => {
         Poseidon::<Scalar, U25>::new_with_preimage(&self.state, &self.constants.constants25).hash()
       }
@@ -96,12 +94,34 @@ where
       _ => {
         panic!("Number of elements in the RO state does not match any of the arities used in Nova")
       }
-    };
+    }
+  }
+
+  /// Compute a challenge by hashing the current state
+  #[allow(dead_code)]
+  pub fn get_challenge(&mut self) -> Scalar {
+    let hash = self.hash_inner();
     // Only keep 128 bits
     let bits = hash.to_le_bits();
     let mut res = Scalar::zero();
     let mut coeff = Scalar::one();
     for bit in bits[0..128].into_iter() {
+      if *bit {
+        res += coeff;
+      }
+      coeff += coeff;
+    }
+    res
+  }
+
+  #[allow(dead_code)]
+  pub fn get_hash(&mut self) -> Scalar {
+    let hash = self.hash_inner();
+    // Only keep 250 bits
+    let bits = hash.to_le_bits();
+    let mut res = Scalar::zero();
+    let mut coeff = Scalar::one();
+    for bit in bits[0..250].into_iter() {
       if *bit {
         res += coeff;
       }
@@ -134,24 +154,22 @@ where
     }
   }
 
-  /// Flush the state of the RO
-  pub fn flush_state(&mut self) {
-    self.state = Vec::new();
-  }
-
   /// Absorb a new number into the state of the oracle
   #[allow(dead_code)]
   pub fn absorb(&mut self, e: AllocatedNum<Scalar>) {
     self.state.push(e);
   }
 
-  /// Compute a challenge by hashing the current state
-  #[allow(dead_code)]
-  pub fn get_challenge<CS>(&mut self, mut cs: CS) -> Result<Vec<AllocatedBit>, SynthesisError>
+  fn hash_inner<CS>(&mut self, mut cs: CS) -> Result<Vec<AllocatedBit>, SynthesisError>
   where
     CS: ConstraintSystem<Scalar>,
   {
     let out = match self.state.len() {
+      8 => poseidon_hash(
+        cs.namespace(|| "Posideon hash"),
+        self.state.clone(),
+        &self.constants.constants8,
+      )?,
       25 => poseidon_hash(
         cs.namespace(|| "Poseidon hash"),
         self.state.clone(),
@@ -168,19 +186,45 @@ where
         &self.constants.constants31,
       )?,
       _ => {
-        panic!("Number of elements in the RO state does not match any of the arities used in Nova")
+        panic!(
+          "Number of elements in the RO state does not match any of the arities used in Nova {}",
+          self.state.len()
+        )
       }
     };
+
+    // return the hash as a vector of bits
+    Ok(
+      out
+        .to_bits_le_strict(cs.namespace(|| "poseidon hash to boolean"))?
+        .iter()
+        .map(|boolean| match boolean {
+          Boolean::Is(ref x) => x.clone(),
+          _ => panic!("Wrong type of input. We should have never reached there"),
+        })
+        .collect(),
+    )
+  }
+
+  /// Compute a challenge by hashing the current state
+  #[allow(dead_code)]
+  pub fn get_challenge<CS>(&mut self, mut cs: CS) -> Result<Vec<AllocatedBit>, SynthesisError>
+  where
+    CS: ConstraintSystem<Scalar>,
+  {
+    let bits = self.hash_inner(cs.namespace(|| "hash"))?;
     // Only keep 128 bits
-    let bits: Vec<AllocatedBit> = out
-      .to_bits_le_strict(cs.namespace(|| "poseidon hash to boolean"))?
-      .iter()
-      .map(|boolean| match boolean {
-        Boolean::Is(ref x) => x.clone(),
-        _ => panic!("Wrong type of input. We should have never reached there"),
-      })
-      .collect();
     Ok(bits[..128].into())
+  }
+
+  #[allow(dead_code)]
+  pub fn get_hash<CS>(&mut self, mut cs: CS) -> Result<Vec<AllocatedBit>, SynthesisError>
+  where
+    CS: ConstraintSystem<Scalar>,
+  {
+    let bits = self.hash_inner(cs.namespace(|| "hash"))?;
+    // Only keep 250 bits
+    Ok(bits[..250].into())
   }
 }
 
@@ -189,9 +233,8 @@ mod tests {
   use super::*;
   type S = pasta_curves::pallas::Scalar;
   type G = pasta_curves::pallas::Point;
-  use crate::bellperson::solver::SatisfyingAssignment;
-  use crate::gadgets::utils::le_bits_to_num;
-  use crate::traits::PrimeField;
+  use crate::{bellperson::solver::SatisfyingAssignment, gadgets::utils::le_bits_to_num};
+  use ff::Field;
   use rand::rngs::OsRng;
 
   #[test]
