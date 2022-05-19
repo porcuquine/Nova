@@ -2,6 +2,8 @@
 use crate::traits::{ChallengeTrait, CompressedGroup, Group};
 use ff::Field;
 use merlin::Transcript;
+use num_bigint::BigInt;
+use num_traits::Num;
 use pasta_curves::{
   self,
   arithmetic::{CurveAffine, CurveExt, Group as Grp},
@@ -10,7 +12,6 @@ use pasta_curves::{
 };
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
-use rug::Integer;
 use std::{borrow::Borrow, ops::Mul};
 
 //////////////////////////////////////Pallas///////////////////////////////////////////////
@@ -77,8 +78,8 @@ impl Group for pallas::Point {
     }
   }
 
-  fn get_order() -> Integer {
-    Integer::from_str_radix(
+  fn get_order() -> BigInt {
+    BigInt::from_str_radix(
       "40000000000000000000000000000000224698fc0994a8dd8c46eb2100000001",
       16,
     )
@@ -170,8 +171,8 @@ impl Group for vesta::Point {
     }
   }
 
-  fn get_order() -> Integer {
-    Integer::from_str_radix(
+  fn get_order() -> BigInt {
+    BigInt::from_str_radix(
       "40000000000000000000000000000000224698fc094cf91b992d30ed00000001",
       16,
     )
